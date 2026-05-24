@@ -3,10 +3,13 @@ services:
     build: .
     ports:
       - "8080:8080"
+      - "9119:9119"
     environment:
       - PORT=8080
+      - PORT=9119
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=admin
+      - HERMES_DASHBOARD=1
     volumes:
       - hermes-data:/data
 
