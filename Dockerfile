@@ -21,6 +21,13 @@ RUN git clone --depth 1 https://github.com/NousResearch/hermes-agent.git /tmp/he
     uv pip install --system --no-cache -e ".[all]" && \
     rm -rf /tmp/hermes-agent/.git
 
+# Build the web UI for hermes dashboard
+RUN cd /tmp/hermes-agent/web && \
+    npm install --ignore-scripts && \
+    npm run build && \
+    rm -rf node_modules
+ENV HERMES_WEB_DIST=/tmp/hermes-agent/hermes_cli/web_dist
+
 COPY requirements.txt /app/requirements.txt
 RUN uv pip install --system --no-cache -r /app/requirements.txt
 

@@ -30,9 +30,14 @@
     <header class="flex items-center justify-between mb-8">
       <div class="flex items-center gap-3">
         <h1 class="text-2xl font-bold tracking-tight">Hermes Agent</h1>
-        <span class="text-xs px-2 py-0.5 rounded-full font-medium"
-              :class="status.gateway?.state === 'running' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : status.gateway?.state === 'error' ? 'bg-red-500/20 text-red-600 dark:text-red-400' : 'bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400'"
-              x-text="status.gateway?.state || 'unknown'"></span>
+        <div class="flex gap-1.5">
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+                :class="status.gateway?.state === 'running' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : status.gateway?.state === 'error' ? 'bg-red-500/20 text-red-600 dark:text-red-400' : 'bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400'"
+                x-text="'gw: ' + (status.gateway?.state || 'unknown')"></span>
+          <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+                :class="status.dashboard?.state === 'running' ? 'bg-emerald-500/20 text-emerald-600 dark:text-emerald-400' : status.dashboard?.state === 'error' ? 'bg-red-500/20 text-red-600 dark:text-red-400' : 'bg-gray-200 text-gray-500 dark:bg-gray-700 dark:text-gray-400'"
+                x-text="'ui: ' + (status.dashboard?.state || 'unknown')"></span>
+        </div>
       </div>
       <button @click="restartGateway()" class="text-sm px-3 py-1.5 bg-gray-200 hover:bg-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700 rounded-lg transition">
         Restart Gateway
@@ -386,6 +391,44 @@
         </section>
 
         <section>
+          <h2 class="text-lg font-semibold mb-3">Dashboard <span class="text-xs font-normal text-gray-400">(port <span x-text="status.dashboard?.port || 9119"></span>)</span></h2>
+          <div class="bg-white border border-gray-200 dark:bg-gray-900 dark:border-gray-800 rounded-xl p-4">
+            <div class="flex items-center justify-between mb-4">
+              <div class="flex items-center gap-4">
+                <div>
+                  <span class="text-xs text-gray-500">State</span>
+                  <p class="font-medium" :class="{
+                    'text-emerald-600 dark:text-emerald-400': status.dashboard?.state === 'running',
+                    'text-red-600 dark:text-red-400': status.dashboard?.state === 'error',
+                    'text-yellow-600 dark:text-yellow-400': status.dashboard?.state === 'starting' || status.dashboard?.state === 'stopping',
+                    'text-gray-500 dark:text-gray-400': status.dashboard?.state === 'stopped'
+                  }" x-text="status.dashboard?.state || 'unknown'"></p>
+                </div>
+                <div x-show="status.dashboard?.pid">
+                  <span class="text-xs text-gray-500">PID</span>
+                  <p class="font-medium" x-text="status.dashboard?.pid"></p>
+                </div>
+                <div x-show="status.dashboard?.uptime != null">
+                  <span class="text-xs text-gray-500">Uptime</span>
+                  <p class="font-medium" x-text="formatUptime(status.dashboard?.uptime)"></p>
+                </div>
+                <div>
+                  <span class="text-xs text-gray-500">Restarts</span>
+                  <p class="font-medium" x-text="status.dashboard?.restart_count ?? 0"></p>
+                </div>
+              </div>
+              <div class="flex gap-2">
+                <button @click="startDashboard()" class="text-xs px-3 py-1.5 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-600/20 dark:text-emerald-400 dark:hover:bg-emerald-600/30 rounded-lg transition"
+                        :disabled="status.dashboard?.state === 'running'">Start</button>
+                <button @click="stopDashboard()" class="text-xs px-3 py-1.5 bg-red-100 text-red-700 hover:bg-red-200 dark:bg-red-600/20 dark:text-red-400 dark:hover:bg-red-600/30 rounded-lg transition"
+                        :disabled="status.dashboard?.state === 'stopped'">Stop</button>
+                <button @click="restartDashboard()" class="text-xs px-3 py-1.5 bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-600/20 dark:text-blue-400 dark:hover:bg-blue-600/30 rounded-lg transition">Restart</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section>
           <h2 class="text-lg font-semibold mb-3">Providers</h2>
           <div class="bg-white border border-gray-200 dark:bg-gray-900 dark:border-gray-800 rounded-xl overflow-hidden">
             <table class="w-full text-sm">
@@ -439,14 +482,27 @@
 
         <section>
           <div class="flex items-center justify-between mb-3">
-            <h2 class="text-lg font-semibold">Recent Logs</h2>
+            <h2 class="text-lg font-semibold">Gateway Logs</h2>
             <span class="text-xs text-gray-500" x-text="logs.length + ' lines'"></span>
           </div>
-          <div class="bg-white border border-gray-200 dark:bg-gray-900 dark:border-gray-800 rounded-xl p-4 log-viewer h-96 overflow-y-auto" x-ref="logViewer">
+          <div class="bg-white border border-gray-200 dark:bg-gray-900 dark:border-gray-800 rounded-xl p-4 log-viewer h-64 overflow-y-auto" x-ref="logViewer">
             <template x-for="(line, i) in logs" :key="i">
               <div class="text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all" x-text="line"></div>
             </template>
             <div x-show="logs.length === 0" class="text-gray-400 dark:text-gray-600 text-sm">No logs yet</div>
+          </div>
+        </section>
+
+        <section>
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-lg font-semibold">Dashboard Logs</h2>
+            <span class="text-xs text-gray-500" x-text="dashboardLogs.length + ' lines'"></span>
+          </div>
+          <div class="bg-white border border-gray-200 dark:bg-gray-900 dark:border-gray-800 rounded-xl p-4 log-viewer h-48 overflow-y-auto" x-ref="dashboardLogViewer">
+            <template x-for="(line, i) in dashboardLogs" :key="i">
+              <div class="text-gray-600 dark:text-gray-400 whitespace-pre-wrap break-all" x-text="line"></div>
+            </template>
+            <div x-show="dashboardLogs.length === 0" class="text-gray-400 dark:text-gray-600 text-sm">No dashboard logs yet</div>
           </div>
         </section>
       </div>
@@ -467,6 +523,7 @@
         defs: [],
         status: {},
         logs: [],
+        dashboardLogs: [],
         pendingUsers: [],
         approvedUsers: [],
         saving: false,
@@ -500,9 +557,11 @@
           await this.loadConfig();
           await this.loadStatus();
           await this.loadLogs();
+          await this.loadDashboardLogs();
           await this.loadPairing();
           setInterval(() => this.loadStatus(), 5000);
           setInterval(() => this.loadLogs(), 3000);
+          setInterval(() => this.loadDashboardLogs(), 3000);
           setInterval(() => this.loadPairing(), 5000);
         },
 
@@ -586,6 +645,41 @@
         async restartGateway() {
           await fetch('/api/gateway/restart', { method: 'POST' });
           this.showToast('Gateway restarting', 'success');
+          setTimeout(() => this.loadStatus(), 2000);
+        },
+
+        async loadDashboardLogs() {
+          try {
+            const res = await fetch('/api/dashboard/logs');
+            if (res.ok) {
+              const data = await res.json();
+              const wasAtBottom = this.$refs.dashboardLogViewer &&
+                (this.$refs.dashboardLogViewer.scrollTop + this.$refs.dashboardLogViewer.clientHeight >= this.$refs.dashboardLogViewer.scrollHeight - 50);
+              this.dashboardLogs = data.lines;
+              if (wasAtBottom && this.$refs.dashboardLogViewer) {
+                this.$nextTick(() => {
+                  this.$refs.dashboardLogViewer.scrollTop = this.$refs.dashboardLogViewer.scrollHeight;
+                });
+              }
+            }
+          } catch (e) {}
+        },
+
+        async startDashboard() {
+          await fetch('/api/dashboard/start', { method: 'POST' });
+          this.showToast('Dashboard starting', 'success');
+          setTimeout(() => this.loadStatus(), 1000);
+        },
+
+        async stopDashboard() {
+          await fetch('/api/dashboard/stop', { method: 'POST' });
+          this.showToast('Dashboard stopping', 'success');
+          setTimeout(() => this.loadStatus(), 1000);
+        },
+
+        async restartDashboard() {
+          await fetch('/api/dashboard/restart', { method: 'POST' });
+          this.showToast('Dashboard restarting', 'success');
           setTimeout(() => this.loadStatus(), 2000);
         },
 

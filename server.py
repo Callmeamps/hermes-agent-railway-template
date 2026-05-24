@@ -295,6 +295,100 @@ gateway = GatewayManager()
 config_lock = asyncio.Lock()
 
 
+class DashboardManager:
+    """Manages the hermes dashboard process (FastAPI web UI on :9119)."""
+
+    def __init__(self):
+        self.process: asyncio.subprocess.Process | None = None
+        self.state = "stopped"
+        self.logs: deque[str] = deque(maxlen=200)
+        self.start_time: float | None = None
+        self.restart_count = 0
+        self._read_tasks: list[asyncio.Task] = []
+        self.port = int(os.environ.get("DASHBOARD_PORT", "9119"))
+
+    async def start(self):
+        if self.process and self.process.returncode is None:
+            return
+        self.state = "starting"
+        try:
+            env = os.environ.copy()
+            env["HERMES_HOME"] = HERMES_HOME
+            env_vars = read_env_file(ENV_FILE_PATH)
+            env.update(env_vars)
+
+            self.process = await asyncio.create_subprocess_exec(
+                "hermes", "dashboard",
+                "--host", "0.0.0.0",
+                "--port", str(self.port),
+                "--insecure",
+                "--no-open",
+                "--skip-build",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+            )
+            self.state = "running"
+            self.start_time = time.time()
+            task = asyncio.create_task(self._read_output())
+            self._read_tasks.append(task)
+        except Exception as e:
+            self.state = "error"
+            self.logs.append(f"Failed to start dashboard: {e}")
+
+    async def stop(self):
+        if not self.process or self.process.returncode is not None:
+            self.state = "stopped"
+            return
+        self.state = "stopping"
+        self.process.terminate()
+        try:
+            await asyncio.wait_for(self.process.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            self.process.kill()
+            await self.process.wait()
+        self.state = "stopped"
+        self.start_time = None
+
+    async def restart(self):
+        await self.stop()
+        self.restart_count += 1
+        await self.start()
+
+    async def _read_output(self):
+        try:
+            while self.process and self.process.stdout:
+                line = await self.process.stdout.readline()
+                if not line:
+                    break
+                decoded = line.decode("utf-8", errors="replace").rstrip()
+                cleaned = ANSI_ESCAPE.sub("", decoded)
+                self.logs.append(cleaned)
+        except asyncio.CancelledError:
+            return
+        if self.process and self.process.returncode is not None and self.state == "running":
+            self.state = "error"
+            self.logs.append(f"Dashboard exited with code {self.process.returncode}")
+
+    def get_status(self) -> dict:
+        pid = None
+        if self.process and self.process.returncode is None:
+            pid = self.process.pid
+        uptime = None
+        if self.start_time and self.state == "running":
+            uptime = int(time.time() - self.start_time)
+        return {
+            "state": self.state,
+            "pid": pid,
+            "port": self.port,
+            "uptime": uptime,
+            "restart_count": self.restart_count,
+        }
+
+
+dashboard = DashboardManager()
+
+
 async def homepage(request: Request):
     auth_err = require_auth(request)
     if auth_err:
@@ -303,7 +397,7 @@ async def homepage(request: Request):
 
 
 async def health(request: Request):
-    return JSONResponse({"status": "ok", "gateway": gateway.state})
+    return JSONResponse({"status": "ok", "gateway": gateway.state, "dashboard": dashboard.state})
 
 
 async def api_config_get(request: Request):
@@ -370,6 +464,7 @@ async def api_status(request: Request):
 
     return JSONResponse({
         "gateway": gateway.get_status(),
+        "dashboard": dashboard.get_status(),
         "providers": providers,
         "channels": channels,
     })
@@ -380,6 +475,13 @@ async def api_logs(request: Request):
     if auth_err:
         return auth_err
     return JSONResponse({"lines": list(gateway.logs)})
+
+
+async def api_dashboard_logs(request: Request):
+    auth_err = require_auth(request)
+    if auth_err:
+        return auth_err
+    return JSONResponse({"lines": list(dashboard.logs)})
 
 
 async def api_gateway_start(request: Request):
@@ -403,6 +505,30 @@ async def api_gateway_restart(request: Request):
     if auth_err:
         return auth_err
     asyncio.create_task(gateway.restart())
+    return JSONResponse({"ok": True})
+
+
+async def api_dashboard_start(request: Request):
+    auth_err = require_auth(request)
+    if auth_err:
+        return auth_err
+    asyncio.create_task(dashboard.start())
+    return JSONResponse({"ok": True})
+
+
+async def api_dashboard_stop(request: Request):
+    auth_err = require_auth(request)
+    if auth_err:
+        return auth_err
+    asyncio.create_task(dashboard.stop())
+    return JSONResponse({"ok": True})
+
+
+async def api_dashboard_restart(request: Request):
+    auth_err = require_auth(request)
+    if auth_err:
+        return auth_err
+    asyncio.create_task(dashboard.restart())
     return JSONResponse({"ok": True})
 
 
@@ -556,6 +682,7 @@ async def auto_start_gateway():
     has_provider = any(env_vars.get(key) for key in PROVIDER_KEYS)
     if has_provider:
         asyncio.create_task(gateway.start())
+        asyncio.create_task(dashboard.start())
 
 
 routes = [
@@ -568,6 +695,10 @@ routes = [
     Route("/api/gateway/start", api_gateway_start, methods=["POST"]),
     Route("/api/gateway/stop", api_gateway_stop, methods=["POST"]),
     Route("/api/gateway/restart", api_gateway_restart, methods=["POST"]),
+    Route("/api/dashboard/start", api_dashboard_start, methods=["POST"]),
+    Route("/api/dashboard/stop", api_dashboard_stop, methods=["POST"]),
+    Route("/api/dashboard/restart", api_dashboard_restart, methods=["POST"]),
+    Route("/api/dashboard/logs", api_dashboard_logs),
     Route("/api/pairing/pending", api_pairing_pending),
     Route("/api/pairing/approve", api_pairing_approve, methods=["POST"]),
     Route("/api/pairing/deny", api_pairing_deny, methods=["POST"]),
@@ -579,6 +710,7 @@ routes = [
 async def lifespan(app):
     await auto_start_gateway()
     yield
+    await dashboard.stop()
     await gateway.stop()
 
 
@@ -601,6 +733,7 @@ if __name__ == "__main__":
     server = uvicorn.Server(config)
 
     def handle_signal():
+        loop.create_task(dashboard.stop())
         loop.create_task(gateway.stop())
         server.should_exit = True
 
